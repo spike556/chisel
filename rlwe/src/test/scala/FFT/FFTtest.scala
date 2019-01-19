@@ -55,7 +55,7 @@ class FFTtest(c:R2MDC) extends PeekPokeTester(c) {
     res
   }
 
-  var l = 6
+  var l = 10
   val r = new scala.util.Random
   var bound: Double = math.pow(2.0, l)
   var error: Double = 0
@@ -78,34 +78,45 @@ class FFTtest(c:R2MDC) extends PeekPokeTester(c) {
     var ref = fft(a)
 
     var errorOne: Double = 0
+    var error1: Double = 0
+    var ovNum1: Int = 0
     var eps: Double = 1e-5
     for (i <- 0 until 32) {
-//      print(ref(reverse(i * 2, 6)))
-//      var d1 = peek(c.io.dOut1)
-//      print(" real:" + (2 * d1("re").toDouble / bound) + " im:" + (2 * d1("im").toDouble / bound) + "\n")
-//      print(ref(reverse(i * 2 + 1, 6)))
-//      var d2 = peek(c.io.dOut2)
-//      print(" real:" + (2 * d2("re").toDouble / bound) + " im:" + (2 * d2("im").toDouble / bound) + "\n")
       var ref1 = ref(reverse(i * 2, 6))
       var d1 = peek(c.io.dOut1)
-      errorOne += math.abs((((2 * d1("re").toDouble / bound) - ref1.re) / (ref1.re + eps) + ((2 * d1("im").toDouble / bound) - ref1.im) / (ref1.im + eps)) / 2.0)
+      error1 = math.abs((((2 * d1("re").toDouble / bound) - ref1.re) / (ref1.re + eps) + ((2 * d1("im").toDouble / bound) - ref1.im) / (ref1.im + eps)) / 2.0)
+      if (error1 <= 0.5) {
+        errorOne += error1
+      } else {
+        ovNum1 += 1
+      }
+      //errorOne += math.abs((((2 * d1("re").toDouble / bound) - ref1.re) / (ref1.re + eps) + ((2 * d1("im").toDouble / bound) - ref1.im) / (ref1.im + eps)) / 2.0)
       var ref2 = ref(reverse(i * 2 + 1, 6))
       var d2 = peek(c.io.dOut2)
-      errorOne += math.abs((((2 * d2("re").toDouble / bound) - ref2.re) / (ref2.re + eps) + ((2 * d2("im").toDouble / bound) - ref2.im) / (ref2.im + eps)) / 2.0)
+      error1 = math.abs((((2 * d2("re").toDouble / bound) - ref2.re) / (ref2.re + eps) + ((2 * d2("im").toDouble / bound) - ref2.im) / (ref2.im + eps)) / 2.0)
+      if (error1 <= 0.5) {
+        errorOne += error1
+      } else {
+        ovNum1 += 1
+      }
+      //errorOne += math.abs((((2 * d2("re").toDouble / bound) - ref2.re) / (ref2.re + eps) + ((2 * d2("im").toDouble / bound) - ref2.im) / (ref2.im + eps)) / 2.0)
       step(1)
     }
-    errorOne /= 64
-    if (errorOne > 0.5) {
-      ovNum +=1
-    } else {
-      error += errorOne
-    }
+    errorOne = errorOne / (64 - ovNum1)
+    ovNum += ovNum1
+    error += errorOne
+//    if (errorOne > 0.5) {
+//      ovNum +=1
+//    } else {
+//      error += errorOne
+//    }
+
     var errorOnePercent = errorOne*100
-    printf("%.2f%%\n", errorOnePercent)
+    printf("%.2f%% number of ovs: %d\n", errorOnePercent, ovNum1)
   }
   error /= iterNum
   print("Total error rate is: " + error*100 + "%\n")
-  print(ovNum + " of " + iterNum + " overflowed! " + "The overlow ratio is " + 100 * ovNum / iterNum.toDouble  + "%" + "\n")
+  print(ovNum + " of " + iterNum * 64 + " overflowed! " + "The overlow ratio is " + 100 * ovNum / (64*iterNum).toDouble  + "%" + "\n")
 }
 
 object FFTTestMain extends App {
