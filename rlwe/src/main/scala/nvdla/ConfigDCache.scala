@@ -5,6 +5,7 @@ import chisel3.util._
 
 object ConfigDCache {
   // Cache param
+  // 16 KB
   val nSet = 256
   val nWay = 4
   val nByte = 16

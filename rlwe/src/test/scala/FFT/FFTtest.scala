@@ -4,6 +4,25 @@ package FFT
 import chisel3.iotesters
 import chisel3.iotesters.{ChiselFlatSpec, Driver, PeekPokeTester}
 
+
+object Solution {
+  def lengthOfLongestSubstring(s: String): Int = {
+    var myMap = scala.collection.mutable.HashMap[Char, Int]()
+    var start = -1
+    var maxLen = 0
+    for (i <- s.indices) {
+      if (myMap.contains(s(i)) && myMap(s(i)) > start) {
+        start = myMap(s(i))
+      }
+      myMap(s(i)) = i
+      if (i - start > maxLen) {
+        maxLen = i - start
+      }
+    }
+    maxLen
+  }
+}
+
 class Complex(val re: Double, val im: Double) {
   def +(rhs: Complex) = new Complex(re + rhs.re, im + rhs.im)
   def -(rhs: Complex) = new Complex(re - rhs.re, im - rhs.im)

@@ -1,0 +1,4 @@
+*.v
+*.fir
+*.anno.json
+/rlwe/test_run_dir/*

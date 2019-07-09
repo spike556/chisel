@@ -256,7 +256,6 @@ class CMAC {
   **/
   def MAC(dat: BigInt, wt: BigInt, mask: BigInt = BigInt("ffffffffffffffff", 16)): (BigInt, BigInt) = {
     // NaN
-    // TODO: how to deal with infinity ?
     var nanRes = naNSW(dat, wt)
     assert(nanRes._2 == BigInt(0))
 

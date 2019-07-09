@@ -10,7 +10,6 @@ import ConfigDCache._
   *  1. Write Back & Write Allocate
   *  2. No Write Buffer (Blocking)
   *  3. No Pipelined
-  *  4. No performance Counter
   *
   * */
 
@@ -96,6 +95,9 @@ class DCache extends Module {
     val masterResp = Output(new MasterRespType)
     val memReq = Output(new MemReqType)
     val memResp = Input(new MemRespType)
+    // performance counter
+    val hitCnt = Output(UInt(32.W))
+    val missCnt = Output(UInt(32.W))
   })
 
   // address decode
@@ -169,7 +171,18 @@ class DCache extends Module {
   val nextState = WireInit(stateIdle)
   state := nextState
   val replaceWay = RegInit(0.U(wayWidth.W))
+  val fifoin = Wire(Decoupled(UInt(nWay.W)))
+  fifoin.valid := 0.U
+  fifoin.bits := tagValidHits
+  val fifo = Queue(fifoin, nWay)
+  fifo.nodeq()
   val needWriteBack = tagReadValue(replaceWay).valid && tagReadValue(replaceWay).dirty
+
+  // performance counter
+  val hitCnt = RegInit(0.U(32.W))
+  val missCnt = RegInit(0.U(32.W))
+  io.hitCnt := hitCnt
+  io.missCnt := missCnt
 
   switch(state) {
     is(stateIdle) {
@@ -178,6 +191,8 @@ class DCache extends Module {
     is(stateCompare) {
       when(tagValidHits.orR) {       // should be only one 1's bit
         io.masterResp.ready := 1.U
+        // update fifo
+        fifoin.valid := 1.U
         when(io.masterReq.write === 1.U) {
           // write hit
           // write tag
@@ -193,10 +208,12 @@ class DCache extends Module {
           // read hit, should do nothing
         }
         nextState := stateIdle
+        hitCnt := hitCnt + 1.U
       } .otherwise {
-        // TODO: implement PLRU
-        replaceWay := 3.U            // only one register in this switch block
+        // TODO: implement FIFO
+        replaceWay := fifo.deq()           // only one register in this switch block
         nextState := stateReplace
+        missCnt := missCnt + 1.U
         }
     }
     is(stateReplace) {
@@ -219,10 +236,12 @@ class DCache extends Module {
       when(io.memResp.ready) {
         dataReq.write := 1.U
         dataReq.wayIdx := replaceWay
+        fifoin.valid := 1.U
         // refactor flat => Vec
         for (i <- 0 until dataPerLine) {
           dataWriteValue(i) := io.memResp.data(DWIDTH * (i + 1) - 1, DWIDTH * i)
         }
+        hitCnt := hitCnt - 1.U
         nextState := stateCompare
       }
     }
