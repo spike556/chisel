@@ -2,24 +2,9 @@
 package RLWE
 
 import chisel3._
-import chisel3.util._
 
 trait HasKeccakParameters {
-  /**
-    *
-    * SHA3-256 : output length is 256 bits (not byte!)
-    *
-  **/
-  val SHA224Mode = 0
-  val SHA256Mode = 1
-  val SHA384Mode = 2
-  val SHA512Mode = 3
-  val SHAKE128Mode = 4
-  val SHAKE256Mode = 5
-
-  val DataOutLength = 512
   val ArrayLength = 1600
-  val MaxXOFLength = 1024
   val RoundsNum = 24
 
   def mod(a: Int, q: Int): Int = {

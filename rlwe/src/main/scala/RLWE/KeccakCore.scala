@@ -3,6 +3,8 @@ package RLWE
 
 import chisel3._
 import chisel3.util._
+import utility.SyncFifo
+import fsm._
 
 /**
   *
@@ -56,9 +58,6 @@ class Proc1 extends Module
     }
   }
 }
-object elaborateProc1 extends App {
-  chisel3.Driver.execute(args, () => new Proc1())
-}
 
 class Proc2 extends Module
   with HasKeccakParameters {
@@ -76,9 +75,6 @@ class Proc2 extends Module
     }
   }
 }
-object elaborateProc2 extends App {
-  chisel3.Driver.execute(args, () => new Proc2())
-}
 
 class Proc3 extends Module
   with HasKeccakParameters {
@@ -91,9 +87,6 @@ class Proc3 extends Module
     }
   }
 }
-object elaborateProc3 extends App {
-  chisel3.Driver.execute(args, () => new Proc3())
-}
 
 class Proc4 extends Module
   with HasKeccakParameters {
@@ -105,9 +98,6 @@ class Proc4 extends Module
       io.out.s(y)(x) := (~state(y)(mod(x + 1, 5)) & state(y)(mod(x + 2, 5))) ^ state(y)(x)
     }
   }
-}
-object elaborateProc4 extends App {
-  chisel3.Driver.execute(args, () => new Proc4())
 }
 
 class Proc5(ir: Int) extends Module
@@ -124,69 +114,151 @@ class Proc5(ir: Int) extends Module
   nextState.s(0)(0) := state(0)(0) ^ RC.asUInt()
   io.out.s := nextState.s
 }
-object elaborateProc5 extends App {
-  chisel3.Driver.execute(args, () => new Proc5(0))
-}
-
-
 
 class KeccakCoreIO extends Bundle
   with HasKeccakParameters {
-  val mode = Input(UInt(3.W))
-  val seed = Input(UInt(ArrayLength.W))
-  val inputValid = Input(Bool())
-  // output length for XOF
-  val d = Input(UInt((log2Ceil(MaxXOFLength) + 1).W))
-  val prngNumber = Output(UInt(DataOutLength.W))
-  val outputValid = Output(Bool())
+  val valid = Input(Bool())
+  val seed = Input(new stateArray())
+  val seedWrite = Input(Bool())
+  val prngNumber = Output(new stateArray())
+  val done = Output(Bool())
+  val initialized = Output(Bool())
 }
 
+/**
+  *  cnt   valid        state                            done
+  *   0      0                                             0
+  *   0      1
+  *   1      done care
+  *   .
+  *   .
+  *   .
+  *   24                end point write to final value
+  *   0                                                    1
+  */
 class KeccakCore extends Module
   with HasKeccakParameters {
   val io = IO(new KeccakCoreIO())
 
-  io.prngNumber := 0.U(DataOutLength.W)
-  io.outputValid := false.B
+  // count control
+  val cnt = RegInit(0.U(5.W))
+  val busy = cnt =/= 0.U
+  val countBegin = io.valid || busy
+  val state = Wire(Vec(5, new stateArray()))
+  val stateReg = Reg((new stateArray()))
+  val completeFlag = cnt === RoundsNum.asUInt()
+  val initialized = RegInit(false.B)
 
-  // secret seed
-  val stateReg = RegInit(0.U(ArrayLength.W))
-  when(io.inputValid) {
+  when(countBegin) {
+    cnt := Mux(completeFlag, 0.U, cnt + 1.U)
+  }
+
+  when(io.seedWrite) {
     stateReg := io.seed
+    initialized := true.B
+  } .elsewhen(cnt =/= 0.U) {
+    stateReg := state(4)
   }
 
-  // parameter settings
-
-  // default set to SHA224
-  val capacity = WireInit(448.U(11.W))
-  val outLength = WireInit(224.U((log2Ceil(MaxXOFLength) + 1)))
-
-  switch(io.mode) {
-    is(SHA224Mode.asUInt()) {}
-    is(SHA256Mode.asUInt()) {
-      capacity := 512.U
-      outLength := 256.U
-    }
-    is(SHA384Mode.asUInt()) {
-      capacity := 768.U
-      outLength := 384.U
-    }
-    is(SHA512Mode.asUInt()) {
-      capacity := 1024.U
-      outLength := 512.U
-    }
-    is(SHAKE128Mode.asUInt()) {
-      capacity := 256.U
-      outLength := io.d
-    }
-    is(SHAKE256Mode.asUInt()) {
-      capacity := 512.U
-      outLength := io.d
-    }
+  // module instantion
+  val proc1 = Module(new Proc1())
+  proc1.io.in := Mux(cnt === 0.U, 0.U.asTypeOf(new stateArray()), stateReg)
+  state(0) := proc1.io.out
+  val proc2 = Module(new Proc2())
+  proc2.io.in := state(0)
+  state(1) := proc2.io.out
+  val proc3 = Module(new Proc3())
+  proc3.io.in := state(1)
+  state(2) := proc3.io.out
+  val proc4 = Module(new Proc4())
+  proc4.io.in := state(2)
+  state(3) := proc4.io.out
+  val proc5s = (0 until RoundsNum).map(i => Module(new Proc5(i)).io)
+  for (i <- 0 until RoundsNum) {
+    proc5s(i).in := state(3)
   }
+  state(4) := MuxLookup(cnt, proc5s(0).out, (2 to RoundsNum).map(i => (i.asUInt() -> proc5s(i-1).out)))
 
+  io.prngNumber := stateReg
+  io.done := RegNext(completeFlag)
+  io.initialized := initialized
+}
+
+//class KeccakCoreWithSeed extends Module
+//  with HasKeccakParameters {
+//  val io = IO(new Bundle
+//    with HasKeccakParameters {
+//      val start = Input(Bool())
+//      val prngNumber = Output(new stateArray())
+//      val done = Output(Bool())
+//    }
+//  )
+//
+//}
+
+
+class KeccakWithFifo extends Module
+  with HasCommonParameters
+  with HasKeccakParameters {
+  val io = IO(new Bundle {
+    val valid = Input(Bool())
+    val seed = Input(new stateArray())
+    val seedWrite = Input(Bool())
+    val prn = Output(Vec(ML, UInt(DataWidth.W)))
+    val done = Output(Bool())
+    val busy = Output(Bool())
+    val wb = Output(Bool())
+  })
+
+  val prng = Module(new KeccakCore)
+  prng.io.seed := io.seed
+  prng.io.seedWrite := io.seedWrite
+  val fifo = Module(new SyncFifo(dep = 32, dataType = UInt((ML * DataWidth).W)))
+
+  // fill the buffer if it is not full
+  prng.io.valid := !fifo.io.writeFull && prng.io.initialized
+  // write prn to buffer
+  fifo.io.writeData := prng.io.prngNumber.s.asUInt()
+  fifo.io.writeEnable := prng.io.done
+  fifo.io.readEnable := io.valid
+
+  // get random number
+  for (i <- 0 until ML) {
+    io.prn(i) := fifo.io.readData(DataWidth * i + DataWidth - 1, DataWidth * i)
+  }
+  io.wb := true.B
+  io.done := false.B
+  io.busy := false.B
+
+  // TODO: need to check its timing order
+  val fsm = InstanciateFSM(new FSM{
+    entryState(stateName = "Idle")
+      .act{
+        io.done := false.B
+        io.busy := false.B
+      }
+      .when(io.valid && fifo.io.readEmpty).transferTo(destName = "Wait")
+      .when(io.valid && !fifo.io.readEmpty).transferTo(destName = "Read")
+
+    state(stateName = "Wait")
+      .act{
+        io.done := false.B
+        io.busy := true.B
+      }
+      .when(!fifo.io.readEmpty).transferTo(destName = "Read")
+
+    state(stateName = "Read")
+      .act{
+        io.done := true.B
+        io.busy := false.B
+      }
+      .when(io.valid && fifo.io.readEmpty).transferTo(destName = "Wait")
+      .when(io.valid && !fifo.io.readEmpty).transferTo(destName = "Read")
+      .otherwise.transferToEnd
+  })
 
 }
 
 object elaborateKeccak extends App {
-  chisel3.Driver.execute(args, () => new KeccakCore())
+  chisel3.Driver.execute(args, () => new KeccakWithFifo())
 }
